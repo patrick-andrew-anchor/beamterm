@@ -1,6 +1,6 @@
 {
   "name": "@beamterm/renderer",
-  "version": "1.0.0",
+  "version": "1.1.0-ligatures.0",
   "description": "High-performance WebGL2 terminal renderer with sub-millisecond render times",
   "author": "Adrian Papari",
   "license": "MIT",
