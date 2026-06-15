@@ -11,6 +11,8 @@ mod native_dynamic_atlas;
 mod program;
 pub(crate) mod renderer;
 pub(crate) mod selection;
+#[cfg(feature = "ligatures")]
+pub(crate) mod shaper;
 pub(crate) mod static_atlas;
 pub(crate) mod terminal_grid;
 pub(crate) mod texture;
@@ -18,7 +20,10 @@ mod ubo;
 
 // Primary API re-exports
 // Re-exports for sibling crates (beamterm-renderer)
-pub use atlas::{Atlas, FontAtlas, GlyphSlot, GlyphTracker, sealed};
+pub use atlas::{Atlas, FontAtlas, GlyphSlot, GlyphTracker, ShapedSegment, sealed};
+pub use glyph_cache::MAX_LIGATURE_CELLS;
+#[cfg(feature = "ligatures")]
+pub use shaper::{Shaper, ShaperError};
 // Crate-internal re-exports
 use buffer::*;
 pub use cell_query::{CellIterator, CellQuery, SelectionMode, select};
