@@ -58,11 +58,15 @@ jobs:
             TAG="renderer-${{ github.sha }}"
             git tag -f "$TAG" && git push -f origin "$TAG"
           fi
+          # Release assets are immutable: never clobber. Downstream consumers pin
+          # the tarball by integrity hash, so re-publishing the same tag with
+          # different bytes silently breaks their lockfiles. If this tag's release
+          # already exists, fail — bump to a new renderer-v* tag for a new build.
           if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" "${{ steps.pack.outputs.path }}" --clobber
-          else
-            gh release create "$TAG" "${{ steps.pack.outputs.path }}" \
-              --title "beamterm renderer (${TAG})" \
-              --notes "Prebuilt \`@beamterm/renderer\` npm package including \`setFontBytes\` (font ligatures, #128). Consume by pinning the tarball asset URL in a downstream package.json." \
-              --prerelease
+            echo "::error::Release $TAG already exists. Bump the version and push a new renderer-v* tag; assets are immutable (re-publishing would change the tarball's integrity hash and break downstream lockfiles)."
+            exit 1
           fi
+          gh release create "$TAG" "${{ steps.pack.outputs.path }}" \
+            --title "beamterm renderer (${TAG})" \
+            --notes "Prebuilt \`@beamterm/renderer\` npm package including \`setFontBytes\` (font ligatures, #128). Consume by pinning the tarball asset URL in a downstream package.json." \
+            --prerelease
