@@ -1,0 +1,68 @@
+name: Publish renderer package
+
+# Builds the @beamterm/renderer npm package from source and attaches the packed
+# tarball to a GitHub Release, so downstream projects (e.g. anchorterm) can pin
+# a fork build via its tarball URL without waiting for an upstream npm publish.
+#
+# Trigger by pushing a tag like `renderer-v1.1.0-ligatures.0`, or run manually.
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'renderer-v*'
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - uses: jetli/wasm-pack-action@v0.4.0
+        with:
+          version: latest
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # The workspace pulls a git dependency that fails libgit2 auth in CI;
+      # the git CLI fetches it over HTTPS instead.
+      - name: Build npm package (all targets)
+        env:
+          CARGO_NET_GIT_FETCH_WITH_CLI: 'true'
+        run: node js/build.js
+
+      - name: Pack tarball
+        id: pack
+        run: |
+          cd js
+          TARBALL=$(npm pack)
+          echo "path=js/${TARBALL}" >> "$GITHUB_OUTPUT"
+          echo "Packed ${TARBALL}"
+
+      - name: Publish to GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            TAG="${{ github.ref_name }}"
+          else
+            TAG="renderer-${{ github.sha }}"
+            git tag -f "$TAG" && git push -f origin "$TAG"
+          fi
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "${{ steps.pack.outputs.path }}" --clobber
+          else
+            gh release create "$TAG" "${{ steps.pack.outputs.path }}" \
+              --title "beamterm renderer (${TAG})" \
+              --notes "Prebuilt \`@beamterm/renderer\` npm package including \`setFontBytes\` (font ligatures, #128). Consume by pinning the tarball asset URL in a downstream package.json." \
+              --prerelease
+          fi
