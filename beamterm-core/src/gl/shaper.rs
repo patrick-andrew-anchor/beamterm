@@ -148,7 +148,6 @@ impl Shaper {
 
     /// Performs the actual rustybuzz shaping for a run (the cache miss path).
     fn segment_uncached(&self, text: &str) -> Vec<Segment> {
-
         let Some(face) = Face::from_slice(&self.font_data, self.face_index) else {
             return per_char_segments(text);
         };
