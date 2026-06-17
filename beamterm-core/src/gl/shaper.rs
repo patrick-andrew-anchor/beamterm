@@ -12,6 +12,9 @@
 //! (contextual alternates) feature rather than plain `liga`, so a static table
 //! read is insufficient — full shaping is required to find them.
 
+use std::{cell::RefCell, num::NonZeroUsize};
+
+use lru::LruCache;
 use rustybuzz::{Face, Feature, UnicodeBuffer, ttf_parser::Tag};
 
 /// Maximum number of cells a single ligature may span.
@@ -52,14 +55,26 @@ pub enum ShaperError {
     ParseFailed,
 }
 
+/// Upper bound on distinct text runs whose segmentation is memoized.
+///
+/// Generously covers a screenful of distinct runs (rows × per-row style spans)
+/// plus churn from a moving cursor line; entries are tiny (`Vec<Segment>`).
+const SEGMENT_CACHE_CAP: usize = 1024;
+
 /// Detects ligature clusters for a single font using rustybuzz.
 ///
 /// Owns the raw font bytes; the borrowing [`Face`] is constructed transiently
-/// for each shaping call.
+/// for each *uncached* shaping call. Results are memoized per run text (see
+/// [`Shaper::segment`]) because the renderer re-shapes the whole screen every
+/// frame and the vast majority of runs are unchanged frame-to-frame.
 pub struct Shaper {
     font_data: Box<[u8]>,
     face_index: u32,
     has_ligatures: bool,
+    /// run text → segmentation. Keyed on text alone: segmentation depends only
+    /// on the characters and the font, and a font change builds a new `Shaper`
+    /// (hence a fresh cache), so no explicit invalidation is needed.
+    cache: RefCell<LruCache<String, Vec<Segment>>>,
 }
 
 impl Shaper {
@@ -79,7 +94,11 @@ impl Shaper {
             face_has_ligature_features(&face)
         };
 
-        Ok(Self { font_data, face_index: 0, has_ligatures })
+        let cache = RefCell::new(LruCache::new(
+            NonZeroUsize::new(SEGMENT_CACHE_CAP).expect("cache cap is non-zero"),
+        ));
+
+        Ok(Self { font_data, face_index: 0, has_ligatures, cache })
     }
 
     /// Returns true if the font advertises `liga` or `calt` substitutions.
@@ -106,12 +125,29 @@ impl Shaper {
     ///
     /// Ligatures wider than [`MAX_LIGATURE_CELLS`] are decomposed into single-cell
     /// segments.
+    ///
+    /// Results are memoized per run text. Building a [`Face`] and running the
+    /// shaper for every run on every frame dominates render time on a static
+    /// screen; the cache turns repeated runs into an `O(len)` map lookup.
     #[must_use]
     pub fn segment(&self, text: &str) -> Vec<Segment> {
         if text.is_empty() {
             return Vec::new();
         }
 
+        if let Some(cached) = self.cache.borrow_mut().get(text) {
+            return cached.clone();
+        }
+
+        let segments = self.segment_uncached(text);
+        self.cache
+            .borrow_mut()
+            .put(text.to_string(), segments.clone());
+        segments
+    }
+
+    /// Performs the actual rustybuzz shaping for a run (the cache miss path).
+    fn segment_uncached(&self, text: &str) -> Vec<Segment> {
         let Some(face) = Face::from_slice(&self.font_data, self.face_index) else {
             return per_char_segments(text);
         };
@@ -266,6 +302,32 @@ mod tests {
         assert!(segs.iter().all(|s| s.cells == 1 && !s.ligated));
         assert_eq!(segs[0].start, 0);
         assert_eq!(segs[3].start, 3);
+    }
+
+    /// The memoized `segment()` returns results identical to the uncached path,
+    /// on both the first (miss) and second (hit) call. Requires a ligature font.
+    #[test]
+    fn cache_returns_identical_segments() {
+        let Ok(path) = std::env::var("BEAMTERM_LIGATURE_TEST_FONT") else {
+            return;
+        };
+        let bytes = std::fs::read(path).expect("read test font");
+        let shaper = Shaper::from_bytes(&bytes).expect("parse test font");
+
+        for text in ["a => b", "x != y", "plain text", "let v = vec![];"] {
+            let uncached = shaper.segment_uncached(text);
+            let first = shaper.segment(text); // miss → populates cache
+            let second = shaper.segment(text); // hit → from cache
+            assert_eq!(first, uncached, "miss diverges from uncached for {text:?}");
+            assert_eq!(second, uncached, "hit diverges from uncached for {text:?}");
+        }
+
+        // A run that ligates must still report the ligature on the cached call.
+        let _ = shaper.segment("a => b");
+        assert!(
+            shaper.segment("a => b").iter().any(|s| s.ligated),
+            "cached call lost the ligature"
+        );
     }
 
     /// Exercises real shaping when a ligature font is available on disk.
