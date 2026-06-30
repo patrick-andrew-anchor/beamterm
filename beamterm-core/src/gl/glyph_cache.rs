@@ -227,7 +227,7 @@ impl GlyphCache {
         let cache_key = (CompactString::new(key), style);
         let is_emoji = is_emoji(key);
 
-        if is_emoji || key.width() == 2 || force_wide {
+        if is_emoji || key.width() >= 2 || force_wide {
             // Check if already present
             if let Some(&slot) = self.wide.get(&cache_key) {
                 return (slot, None);

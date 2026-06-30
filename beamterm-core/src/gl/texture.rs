@@ -171,6 +171,21 @@ impl Texture {
             )));
         }
 
+        // Guard against X and Y overflow — ANGLE rejects out-of-bounds uploads with
+        // GL_INVALID_VALUE instead of silently clipping, producing a console error.
+        if rasterized.width as i32 > self.dimensions.0
+            || y_offset + rasterized.height as i32 > self.dimensions.1
+        {
+            return Err(Error::texture_creation_failed(format_args!(
+                "glyph id {glyph_id} upload {}x{} at y={} overflows texture {}x{}",
+                rasterized.width,
+                rasterized.height,
+                y_offset,
+                self.dimensions.0,
+                self.dimensions.1,
+            )));
+        }
+
         unsafe {
             gl.bind_texture(glow::TEXTURE_2D_ARRAY, Some(self.gl_texture));
 
