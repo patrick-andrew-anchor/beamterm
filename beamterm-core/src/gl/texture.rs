@@ -178,11 +178,7 @@ impl Texture {
         {
             return Err(Error::texture_creation_failed(format_args!(
                 "glyph id {glyph_id} upload {}x{} at y={} overflows texture {}x{}",
-                rasterized.width,
-                rasterized.height,
-                y_offset,
-                self.dimensions.0,
-                self.dimensions.1,
+                rasterized.width, rasterized.height, y_offset, self.dimensions.0, self.dimensions.1,
             )));
         }
 
